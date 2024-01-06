@@ -96,7 +96,9 @@ func GetDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
 	dec := json.NewDecoder(resp.Body)
 
 	if resp.Header.Get("Content-Type") != "application/json; charset=UTF-8" {
-		return nil, errors.New("Unexpected response from reddit.")
+		err = errors.New("Unexpected response from reddit.")
+		slog.Error(err.Error(), "link", link)
+		return nil, err
 	}
 	for {
 		t, err := dec.Token()
