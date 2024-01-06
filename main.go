@@ -1,8 +1,8 @@
 package main
 
 import (
-	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,74 +10,94 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 
 	tele "gopkg.in/telebot.v3"
 )
 
-var redditHeader = http.Header{
+var headers = map[string][]string{
+	"User-Agent":                {"Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"},
 	"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"},
-	"Accept-Encoding":           {"gzip"},
 	"Accept-Language":           {"en-US,en;q=0.5"},
+	"DNT":                       {"1"},
+	"Sec-GPC":                   {"1"},
 	"Connection":                {"keep-alive"},
-	"Host":                      {"www.reddit.com"},
+	"Upgrade-Insecure-Requests": {"1"},
 	"Sec-Fetch-Dest":            {"document"},
 	"Sec-Fetch-Mode":            {"navigate"},
-	"Sec-Fetch-Site":            {"cross-site"},
-	"Sec-GPC":                   {"1"},
-	"Upgrade-Insecure-Requests": {"1"},
-	"User-Agent":                {"Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"},
+	"Sec-Fetch-Site":            {"none"},
+	"Sec-Fetch-User":            {"?1"},
+	"TE":                        {"trailers"},
 }
+var redditRefRegex = regexp.MustCompile("https://www.reddit.com/r/[^/]*/(s|comments)/.*")
 
-var redditPostRegex = regexp.MustCompile("https://www.reddit.com/r/[^/]*/(comments|s)/.*")
+const errorMessage = "На стороне бота произошла ошибка.\nПожалуйста, напишите @aptroapt чтобы её исправили."
+
+func ComposeffmpegCommand(link string) *exec.Cmd {
+	//TODO: Добавить обработку ошибок и работу через именованный pipe?
+	cmd := exec.Command("ffmpeg", "-loglevel", "panic", "-i", link, "-movflags", "frag_keyframe+empty_moov", "-f", "mp4", "pipe:1")
+	for k, v := range headers {
+		cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("%v: %v", k, v[0]))
+	}
+	return cmd
+}
 
 func IsSupported(link *url.URL) bool {
-	return redditPostRegex.MatchString(link.String())
+	return redditRefRegex.MatchString(link.String())
 }
 
-func MakeJSONLink(link *url.URL) *url.URL {
-	link.RawQuery = ""
-	return link.JoinPath("/.json")
-}
-
-// В библиотеке нет проверки на пустой токен.
-func initializeBot() *tele.Bot {
-	pref := tele.Settings{
-		Token:  os.Getenv("RSV_TOKEN"),
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
-	}
-
-	bot, err := tele.NewBot(pref)
+// Завернуть ошибки.
+func GetDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
+	//Запрашиваем заголовки, чтобы получить ссылку-перенаправление
+	req, err := http.NewRequest("HEAD", link.String(), nil)
 	if err != nil {
-		slog.Error(err.Error())
-		os.Exit(0)
-	}
-	return bot
-}
-
-func getDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
-
-	//А обработать код ответа?)
-	//а он может ответить в gzip)
-	req, err := http.NewRequest("GET", link.String(), nil)
-	if err != nil {
-		slog.Error("Ошибка при создании запроса.", "error", err.Error(), "link", link)
+		slog.Error("Creating HEAD request error.", "error", err.Error(), "link", link)
 		return nil, err
 	}
-	req.Header = redditHeader
+	req.Proto = "HTTP/2.0"
+	req.Header = headers
+
 	resp, err := c.Do(req)
 	if err != nil {
-		slog.Error("Ошибка при получении json.", "error", err.Error(), "link", link)
+		slog.Error("Making HEAD request error.", "error", err.Error(), "link", link)
+		return nil, err
+	}
+	//https://stackoverflow.com/questions/68515077/http-client-doesnt-return-response-when-status-is-301-without-a-location-header
+
+	//Обрабатываем перенаправление на пост, меняя link.
+	if resp.StatusCode == 301 {
+		unparsedLink := resp.Header.Get("Location")
+		if unparsedLink == "" {
+			err = errors.New("Reddit has returned empty location")
+			slog.Error(err.Error())
+			return nil, err
+		}
+		link, err = url.Parse(unparsedLink)
+		if err != nil {
+			slog.Error("Error while parsing reddit location link.", "errorText", err.Error())
+			return nil, err
+		}
+	}
+
+	link.RawQuery = ""
+	link = link.JoinPath("/.json")
+	req.Method = "GET"
+	req.URL = link
+	resp, err = c.Do(req)
+	if err != nil {
+		slog.Error("Making GET request error.", "error", err.Error(), "link", link)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	gz, err := gzip.NewReader(resp.Body)
-	defer gz.Close()
+	dec := json.NewDecoder(resp.Body)
 
-	dec := json.NewDecoder(gz)
-
+	if resp.Header.Get("Content-Type") != "application/json; charset=UTF-8" {
+		return nil, errors.New("Unexpected response from reddit.")
+	}
 	for {
 		t, err := dec.Token()
 		if err == io.EOF {
@@ -85,6 +105,9 @@ func getDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
 		}
 		if err != nil {
 			slog.Error("Ошибка при обработкe JSON", "error", err.Error(), "link", link)
+			b := new(strings.Builder)
+			_, _ = io.Copy(b, resp.Body)
+			slog.Error(b.String())
 			return nil, err
 		}
 		if t == "secure_media" {
@@ -113,8 +136,23 @@ func getDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
 	return nil, nil
 }
 
+func initializeBot() *tele.Bot {
+	// В библиотеке нет проверки на пустой токен.
+	pref := tele.Settings{
+		Token:  os.Getenv("RSV_TOKEN"),
+		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+	}
+
+	bot, err := tele.NewBot(pref)
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(0)
+	}
+	return bot
+}
+
 func onTextHandler(c tele.Context) error {
-	//проверка на наличие ссылок
+	//Проверка на наличие ссылок.
 
 	//Применим ли здесь reflect?
 	var messageURLs []*url.URL = make([]*url.URL, 0, 1)
@@ -122,11 +160,10 @@ func onTextHandler(c tele.Context) error {
 		if e.Type == "url" {
 			link, err := url.Parse(c.Message().EntityText(e))
 			if err != nil {
-				slog.Warn("Ошибка при обработки ссылки от телеграмма.", "error", err.Error(), "link", link)
+				slog.Error("Error during processing of a link from telegram.", "error", err.Error(), "link", link)
 				return nil
 			}
 			if IsSupported(link) {
-				link = MakeJSONLink(link)
 				messageURLs = append(messageURLs, link)
 			}
 		}
@@ -134,27 +171,58 @@ func onTextHandler(c tele.Context) error {
 	if len(messageURLs) == 0 {
 		return nil
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+
+	//перевести работу с перенаправлениями в клиент?
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	for _, link := range messageURLs {
 		//Получаем ссылку на скачивание
-		downloadLink, err := getDownloadLink(client, link)
+		downloadLink, err := GetDownloadLink(client, link)
 		if err != nil {
 			if os.IsTimeout(err) {
 				return c.Reply("Нет подключения к реддиту.")
 			}
-			return c.Reply("На стороне бота произошла ошибка при получении видео.\nПожалуйста, напишите @aptroapt чтобы её исправили.")
+			slog.Error("Error during getting download link", "error", err.Error(), "link", link)
+			return c.Reply(errorMessage)
 		}
 		if downloadLink == nil {
 			return nil
 		}
-		return c.Reply(fmt.Sprintf("Тут должен быть выбор качества, но я пока пошёл разбираться с ffmpeg.\nВот хотя бы ссылка на m3u8: %v", downloadLink))
+
+		//Выбор качества
+
+		//...
+
+		//Скачивание и отправка видео.
+		cmd := ComposeffmpegCommand(downloadLink.String())
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			slog.Error("Error while getting pipe.", "error", err.Error())
+			return c.Reply(errorMessage)
+		}
+		if err = cmd.Start(); err != nil {
+			slog.Error("Starting ffmpeg error", "error", err.Error())
+			return c.Reply(errorMessage)
+		}
+		video := &tele.Video{File: tele.FromReader(stdout)}
+		r_err := c.Reply(video)
+		if err = cmd.Wait(); err != nil {
+			slog.Error("ffmpeg error", "error", err.Error())
+			return c.Reply(errorMessage)
+		}
+		return r_err
 	}
 	return nil
 }
 
 func main() {
 	log.Println("Initializing bot...")
-	bot := initializeBot() // отключить флаг synchronous
+	bot := initializeBot() // отключить флаг synchronous?
 	log.Println("Bot is initialized.")
 	bot.Handle(tele.OnText, onTextHandler)
 	log.Println("Start polling.")
