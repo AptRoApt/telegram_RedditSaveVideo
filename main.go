@@ -95,11 +95,18 @@ func GetDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
 
 	dec := json.NewDecoder(resp.Body)
 
-	if resp.Header.Get("Content-Type") != "application/json; charset=UTF-8" {
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json; charset=UTF-8" {
 		err = errors.New("Unexpected response from reddit.")
-		slog.Error(err.Error(), "link", link)
+		filename := time.Now().String()
+		if strings.ToLower(ct) == "text/html; charset=utf-8" {
+			errorPage, _ := os.Create(filename)
+			b, _ := io.ReadAll(resp.Body)
+			_, _ = errorPage.Write(b)
+		}
+		slog.Error(err.Error(), "link", link, "errorPage", filename)
 		return nil, err
 	}
+
 	for {
 		t, err := dec.Token()
 		if err == io.EOF {
