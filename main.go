@@ -6,14 +6,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"time"
-
 	"reddit_save_video/internal/reddit"
+	"time"
 
 	tele "gopkg.in/telebot.v3"
 )
 
 const errorMessage = "На стороне бота произошла ошибка.\nПожалуйста, напишите @aptroapt чтобы её исправили."
+
+var client *http.Client
 
 func getLinks(c tele.Context) ([]*url.URL, error) {
 	var messageURLs []*url.URL = make([]*url.URL, 0, 1)
@@ -41,14 +42,10 @@ func onTextHandler(c tele.Context) error {
 		slog.Error("Error during processing of a link from telegram.", "error", err.Error())
 		return nil
 	}
-
-	//перевести работу с перенаправлениями в клиент?
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	if len(messageURLs) == 0 {
+		return nil
 	}
+	//перевести работу с перенаправлениями в клиент?
 
 	message, err := c.Bot().Reply(c.Message(), "Getting links...")
 	if err != nil {
@@ -96,6 +93,7 @@ func onTextHandler(c tele.Context) error {
 			slog.Error("ffmpeg error", "error", err.Error())
 			return nil
 		}
+		_ = c.Bot().Delete(message)
 		return r_err
 	}
 	return nil
@@ -117,6 +115,10 @@ func initializeBot() *tele.Bot {
 }
 
 func main() {
+	client = reddit.GetClient()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	log.Println("Initializing bot...")
 	bot := initializeBot() // отключить флаг synchronous?
 	log.Println("Bot is initialized.")

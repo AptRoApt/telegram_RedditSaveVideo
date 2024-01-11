@@ -1,6 +1,7 @@
 package reddit
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,26 +10,27 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 var redditRefRegex = regexp.MustCompile("https://www.reddit.com/r/[^/]*/(s|comments)/.*")
 var headers = map[string][]string{
-	"User-Agent":                {"Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"},
-	"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"},
-	"Accept-Language":           {"en-US,en;q=0.5"},
-	"DNT":                       {"1"},
-	"Sec-GPC":                   {"1"},
-	"Connection":                {"keep-alive"},
-	"Upgrade-Insecure-Requests": {"1"},
-	"Sec-Fetch-Dest":            {"document"},
-	"Sec-Fetch-Mode":            {"navigate"},
-	"Sec-Fetch-Site":            {"none"},
-	"Sec-Fetch-User":            {"?1"},
-	"TE":                        {"trailers"},
+	"User-Agent": {"My_Test_App/0.1 by Clean_Wheel4197"},
+}
+var cfg = clientcredentials.Config{
+	ClientID:     os.Getenv("My_Test_Bot_ID"),
+	ClientSecret: os.Getenv("My_Test_Bot_Secret"),
+	TokenURL:     "https://www.reddit.com/api/v1/access_token",
+}
+
+func GetClient() *http.Client {
+	return cfg.Client(context.Background())
 }
 
 func IsSupported(link *url.URL) bool {
@@ -44,10 +46,7 @@ func GetDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
 	}
 	req.Header = headers
 	resp, err := c.Do(req)
-	if err != nil {
-		slog.Error("Making HEAD request error.", "error", err.Error(), "link", link)
-		return nil, err
-	}
+
 	//https://stackoverflow.com/questions/68515077/http-client-doesnt-return-response-when-status-is-301-without-a-location-header
 
 	//Обрабатываем перенаправление на пост, меняя link.
@@ -67,8 +66,13 @@ func GetDownloadLink(c *http.Client, link *url.URL) (*url.URL, error) {
 	//TODO: обработка 403, например.
 	link.RawQuery = ""
 	link = link.JoinPath("/.json")
-	req.Method = "GET"
-	req.URL = link
+	link.Host = "oauth.reddit.com"
+	req, err = http.NewRequest("GET", link.String(), nil)
+	if err != nil {
+		slog.Error("Creating HEAD request error.", "error", err.Error(), "link", link)
+		return nil, err
+	}
+	req.Header = headers
 	resp, err = c.Do(req)
 	if err != nil {
 		slog.Error("Making GET request error.", "error", err.Error(), "link", link)
@@ -134,5 +138,10 @@ func ComposeffmpegCommand(link string) *exec.Cmd {
 	for k, v := range headers {
 		cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("%v: %v", k, v[0]))
 	}
+	token, err := cfg.Token(context.Background())
+	if err != nil {
+		return nil
+	}
+	cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("Authorization: %v %v", token.TokenType, token.AccessToken))
 	return cmd
 }
