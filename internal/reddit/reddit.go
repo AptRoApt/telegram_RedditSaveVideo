@@ -136,7 +136,7 @@ func ComposeffmpegCommand(link string) *exec.Cmd {
 	//TODO: Добавить обработку ошибок и работу через именованный pipe?
 	cmd := exec.Command("ffmpeg", "-loglevel", "panic", "-i", link, "-movflags", "frag_keyframe+empty_moov", "-f", "mp4", "pipe:1")
 	for k, v := range headers {
-		cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("%v: %v", k, v[0]))
+		cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("\"%v: %v\"", k, v[0]))
 	}
 	token, err := cfg.Token(context.Background())
 	if err != nil {
