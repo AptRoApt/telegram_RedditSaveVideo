@@ -76,6 +76,11 @@ func onTextHandler(c tele.Context) error {
 		}
 
 		cmd := reddit.ComposeffmpegCommand(downloadLink.String())
+		if cmd == nil {
+			slog.Error("FFMPEG error")
+			_, err = c.Bot().Edit(message, errorMessage)
+			return err
+		}
 		stdout, err := cmd.StdoutPipe()
 
 		if err != nil {
