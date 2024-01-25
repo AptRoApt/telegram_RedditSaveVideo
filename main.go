@@ -3,10 +3,9 @@ package main
 import (
 	"log"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"os"
-	"reddit_save_video/internal/reddit"
+	"reddit_save_video/internal/redditVideoDownloader"
 	"time"
 
 	tele "gopkg.in/telebot.v3"
@@ -14,7 +13,7 @@ import (
 
 const errorMessage = "На стороне бота произошла ошибка.\nПожалуйста, напишите @aptroapt чтобы её исправили."
 
-var client *http.Client
+var rvd = redditVideoDownloader.NewRedditVideoDownloader("My_Test_App/0.1 by Clean_Wheel4197", os.Getenv("My_Test_Bot_ID"), os.Getenv("My_Test_Bot_Secret"))
 
 func getLinks(c tele.Context) ([]*url.URL, error) {
 	var messageURLs []*url.URL = make([]*url.URL, 0, 1)
@@ -25,7 +24,7 @@ func getLinks(c tele.Context) ([]*url.URL, error) {
 				slog.Error("Error during processing of a link from telegram.", "error", err.Error(), "link", link)
 				return nil, nil
 			}
-			if reddit.IsSupported(link) {
+			if rvd.IsRedditPost(link) {
 				messageURLs = append(messageURLs, link)
 			}
 		}
@@ -45,16 +44,16 @@ func onTextHandler(c tele.Context) error {
 	if len(messageURLs) == 0 {
 		return nil
 	}
-	//перевести работу с перенаправлениями в клиент?
 
-	message, err := c.Bot().Reply(c.Message(), "Getting links...")
+	message, err := c.Bot().Reply(c.Message(), "Getting video...")
 	if err != nil {
 		slog.Error("Error on message reply.", "errorText", err.Error())
 		return err
 	}
+
 	for _, link := range messageURLs {
 		//Получаем ссылку на скачивание
-		downloadLink, err := reddit.GetDownloadLink(client, link)
+		downloadLink, err := rvd.GetDownloadLink(link)
 		if err != nil {
 			if os.IsTimeout(err) {
 				_, err = c.Bot().Edit(message, "No connection to reddit.com.")
@@ -75,29 +74,19 @@ func onTextHandler(c tele.Context) error {
 			return err
 		}
 
-		cmd := reddit.ComposeffmpegCommand(downloadLink.String())
-		if cmd == nil {
-			slog.Error("FFMPEG error")
-			_, err = c.Bot().Edit(message, errorMessage)
-			return err
-		}
-		stdout, err := cmd.StdoutPipe()
-
+		videoPath, err := rvd.GetVideo(downloadLink)
 		if err != nil {
-			slog.Error("Error while getting pipe.", "error", err.Error())
+			slog.Error("FFMPEG error", "errorText", err.Error())
 			return nil
 		}
-
-		if err = cmd.Start(); err != nil {
-			slog.Error("Starting ffmpeg error", "error", err.Error())
-			return nil
-		}
-		video := &tele.Video{File: tele.FromReader(stdout)}
+		defer func() {
+			err = os.Remove(videoPath)
+			if err != nil {
+				slog.Error(err.Error())
+			}
+		}()
+		video := &tele.Video{File: tele.FromDisk(videoPath)}
 		r_err := c.Reply(video)
-		if err = cmd.Wait(); err != nil {
-			slog.Error("ffmpeg error", "error", err.Error())
-			return nil
-		}
 		_ = c.Bot().Delete(message)
 		return r_err
 	}
@@ -108,7 +97,7 @@ func initializeBot() *tele.Bot {
 	// В библиотеке нет проверки на пустой токен.
 	pref := tele.Settings{
 		Token:  os.Getenv("RSV_TOKEN"),
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
 	}
 
 	bot, err := tele.NewBot(pref)
@@ -120,12 +109,8 @@ func initializeBot() *tele.Bot {
 }
 
 func main() {
-	client = reddit.GetClient()
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
 	log.Println("Initializing bot...")
-	bot := initializeBot() // отключить флаг synchronous?
+	bot := initializeBot()
 	log.Println("Bot is initialized.")
 	bot.Handle(tele.OnText, onTextHandler)
 	log.Println("Start polling.")
