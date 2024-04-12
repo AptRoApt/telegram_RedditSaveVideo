@@ -199,5 +199,9 @@ func (rvd *RedditVideoDownloader) composeffmpegCommand(link string, filename str
 func (rvd *RedditVideoDownloader) GetVideo(link *url.URL) (string, error) {
 	filename := fmt.Sprintf("%v.mp4", time.Now().Unix())
 	cmd := rvd.composeffmpegCommand(link.String(), filename)
+	if cmd == nil {
+		slog.Error("You need read about os/exec()")
+		return "", fmt.Errorf("cmd is nil...")
+	}
 	return filename, cmd.Run()
 }
