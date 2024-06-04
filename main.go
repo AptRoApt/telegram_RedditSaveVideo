@@ -75,7 +75,7 @@ func onTextHandler(c tele.Context) error {
 			slog.Error("Error on message reply.", "errorText", err.Error())
 			return err
 		}
-
+		slog.Info("Getting video!", "user", c.Sender().ID)
 		videoPath, err := rvd.GetVideo(downloadLink)
 		if err != nil {
 			slog.Error("TOKEN error", "errorText", err.Error())
