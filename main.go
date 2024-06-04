@@ -8,7 +8,9 @@ import (
 	"reddit_save_video/internal/redditVideoDownloader"
 	"time"
 
+
 	tele "gopkg.in/telebot.v3"
+	"net/http"
 )
 
 const errorMessage = "На стороне бота произошла ошибка.\nПожалуйста, напишите @aptroapt чтобы её исправили."
@@ -76,7 +78,7 @@ func onTextHandler(c tele.Context) error {
 
 		videoPath, err := rvd.GetVideo(downloadLink)
 		if err != nil {
-			slog.Error("FFMPEG error", "errorText", err.Error())
+			slog.Error("TOKEN error", "errorText", err.Error())
 			return nil
 		}
 		defer func() {

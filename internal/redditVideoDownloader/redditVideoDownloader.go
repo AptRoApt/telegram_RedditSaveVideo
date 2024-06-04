@@ -190,6 +190,7 @@ func (rvd *RedditVideoDownloader) composeffmpegCommand(link string, filename str
 
 	token, err := rvd.cfg.Token(context.Background())
 	if err != nil {
+		slog.Error("error", err.Error())
 		return nil
 	}
 	cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("\"Authorization: %v %v\"", token.TokenType, token.AccessToken))
@@ -200,8 +201,7 @@ func (rvd *RedditVideoDownloader) GetVideo(link *url.URL) (string, error) {
 	filename := fmt.Sprintf("%v.mp4", time.Now().Unix())
 	cmd := rvd.composeffmpegCommand(link.String(), filename)
 	if cmd == nil {
-		slog.Error("You need read about os/exec()")
-		return "", fmt.Errorf("cmd is nil...")
+		return "", fmt.Errorf("token не получен.")
 	}
 	return filename, cmd.Run()
 }
