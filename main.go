@@ -8,9 +8,7 @@ import (
 	"reddit_save_video/internal/redditVideoDownloader"
 	"time"
 
-
 	tele "gopkg.in/telebot.v3"
-	"net/http"
 )
 
 const errorMessage = "На стороне бота произошла ошибка.\nПожалуйста, напишите @aptroapt чтобы её исправили."
