@@ -1,0 +1,8 @@
+services:
+  bot:
+    build: .
+    environment:
+      RSV_TOKEN: ${RSV_TOKEN}
+      My_Test_Bot_ID: ${My_Test_Bot_ID}
+      My_Test_Bot_Secret: ${My_Test_Bot_Secret}
+  
