@@ -37,9 +37,10 @@ func (rt redditTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 type RedditVideoDownloader struct {
-	client    *http.Client
-	cfg       *clientcredentials.Config
-	userAgent string
+	client      *http.Client
+	cfg         *clientcredentials.Config
+	userAgent   string
+	rateLimiter <-chan time.Time
 }
 
 func (rvd *RedditVideoDownloader) initializeClient() {
@@ -58,14 +59,16 @@ func (rvd *RedditVideoDownloader) initializeClient() {
 	}
 }
 
-func NewRedditVideoDownloader(userAgent string, clientID string, clientSecret string) *RedditVideoDownloader {
+func NewRedditVideoDownloader(userAgent string, clientID string, clientSecret string, rateLimit int64) *RedditVideoDownloader {
+	// rateLimit - милисекунд на запрос
 	rvd := &RedditVideoDownloader{
 		cfg: &clientcredentials.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			TokenURL:     tokenURL,
 		},
-		userAgent: userAgent,
+		userAgent:   userAgent,
+		rateLimiter: time.Tick(time.Duration(rateLimit) * time.Millisecond),
 	}
 	rvd.initializeClient()
 	return rvd
@@ -125,6 +128,8 @@ func getDownloadLink(r io.Reader) (*url.URL, error) {
 // поменять link на string
 func (rvd *RedditVideoDownloader) GetDownloadLink(link *url.URL) (*url.URL, error) {
 	//Запрашиваем заголовки, чтобы получить ссылку-перенаправление
+
+	<-rvd.rateLimiter
 	resp, err := rvd.client.Head(link.String())
 	if err != nil {
 		slog.Error("Error while doing head request.")
@@ -201,5 +206,7 @@ func (rvd *RedditVideoDownloader) GetVideo(link *url.URL) (string, error) {
 	if cmd == nil {
 		return "", fmt.Errorf("token не получен")
 	}
-	return filename, cmd.Run()
+	<-rvd.rateLimiter
+	err := cmd.Run()
+	return filename, err
 }
