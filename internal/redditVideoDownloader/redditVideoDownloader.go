@@ -29,7 +29,6 @@ var redditRefRegex = regexp.MustCompile("https://www.reddit.com/r/[^/]*/(s|comme
 
 type redditTransport struct {
 	UserAgent string
-	transport *http.Transport
 }
 
 func (rt redditTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -40,7 +39,6 @@ func (rt redditTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 type RedditVideoDownloader struct {
 	client    *http.Client
 	cfg       *clientcredentials.Config
-	regex     *regexp.Regexp
 	userAgent string
 }
 
@@ -156,7 +154,7 @@ func (rvd *RedditVideoDownloader) GetDownloadLink(link *url.URL) (*url.URL, erro
 	defer resp.Body.Close()
 
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json; charset=UTF-8" || resp.StatusCode != 200 {
-		err = errors.New("Unexpected response from reddit.")
+		err = errors.New("unexpected response from reddit")
 		filename := time.Now().String()
 		if ct == "text/html" {
 			errorPage, _ := os.Create(filename)
@@ -190,7 +188,7 @@ func (rvd *RedditVideoDownloader) composeffmpegCommand(link string, filename str
 
 	token, err := rvd.cfg.Token(context.Background())
 	if err != nil {
-		slog.Error("error", err.Error())
+		slog.Error("ошибка получения токена при получении видео", "error", err.Error())
 		return nil
 	}
 	cmd.Args = append(cmd.Args, "-headers", fmt.Sprintf("\"Authorization: %v %v\"", token.TokenType, token.AccessToken))
@@ -201,7 +199,7 @@ func (rvd *RedditVideoDownloader) GetVideo(link *url.URL) (string, error) {
 	filename := fmt.Sprintf("%v.mp4", time.Now().Unix())
 	cmd := rvd.composeffmpegCommand(link.String(), filename)
 	if cmd == nil {
-		return "", fmt.Errorf("token не получен.")
+		return "", fmt.Errorf("token не получен")
 	}
 	return filename, cmd.Run()
 }
